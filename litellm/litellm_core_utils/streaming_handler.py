@@ -837,6 +837,10 @@ class CustomStreamWrapper:
                 # Bedrock returns the guardrail trace in the last chunk - we want to return this here
                 if self.custom_llm_provider == "bedrock" and "trace" in model_response:
                     return model_response
+                if self.custom_llm_provider == "openrouter" and (
+                    self.stream_options is not None
+                    and self.stream_options["include_usage"] is True):
+                    return model_response
 
                 # Default - return StopIteration
                 if hasattr(model_response, "usage"):
@@ -945,7 +949,11 @@ class CustomStreamWrapper:
                 and self.custom_llm_provider in litellm._custom_providers
             ):
                 if self.received_finish_reason is not None:
-                    if "provider_specific_fields" not in chunk:
+                    if self.custom_llm_provider == "openrouter" and (
+                        self.stream_options is not None
+                        and self.stream_options["include_usage"] is True):
+                        pass
+                    elif "provider_specific_fields" not in chunk:
                         raise StopIteration
                 anthropic_response_obj: GChunk = cast(GChunk, chunk)
                 completion_obj["content"] = anthropic_response_obj["text"]
