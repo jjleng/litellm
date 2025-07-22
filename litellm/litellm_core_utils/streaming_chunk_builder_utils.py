@@ -321,6 +321,8 @@ class ChunkProcessor:
     def _usage_chunk_calculation_helper(self, usage_chunk: Usage) -> dict:
         prompt_tokens = 0
         completion_tokens = 0
+        cost: Optional[float] = None
+        is_byok: Optional[bool] = None
         ## anthropic prompt caching information ##
         cache_creation_input_tokens: Optional[int] = None
         cache_read_input_tokens: Optional[int] = None
@@ -331,6 +333,10 @@ class ChunkProcessor:
             prompt_tokens = usage_chunk.get("prompt_tokens", 0) or 0
         if "completion_tokens" in usage_chunk:
             completion_tokens = usage_chunk.get("completion_tokens", 0) or 0
+        if "cost" in usage_chunk:
+            cost = usage_chunk.get("cost")
+        if "is_byok" in usage_chunk:
+            is_byok = usage_chunk.get("is_byok")
         if "cache_creation_input_tokens" in usage_chunk:
             cache_creation_input_tokens = usage_chunk.get("cache_creation_input_tokens")
         if "cache_read_input_tokens" in usage_chunk:
@@ -357,6 +363,8 @@ class ChunkProcessor:
         return {
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
+            "cost": cost,
+            "is_byok": is_byok,
             "cache_creation_input_tokens": cache_creation_input_tokens,
             "cache_read_input_tokens": cache_read_input_tokens,
             "completion_tokens_details": completion_tokens_details,
@@ -388,6 +396,8 @@ class ChunkProcessor:
         # # Update usage information if needed
         prompt_tokens = 0
         completion_tokens = 0
+        cost: Optional[float] = None
+        is_byok: Optional[bool] = None
         ## anthropic prompt caching information ##
         cache_creation_input_tokens: Optional[int] = None
         cache_read_input_tokens: Optional[int] = None
@@ -417,6 +427,14 @@ class ChunkProcessor:
                     and usage_chunk_dict["completion_tokens"] > 0
                 ):
                     completion_tokens = usage_chunk_dict["completion_tokens"]
+                if usage_chunk_dict["cost"] is not None and (
+                    usage_chunk_dict["cost"] > 0 or cost is None
+                ):
+                    cost = usage_chunk_dict["cost"]
+                if usage_chunk_dict["is_byok"] is not None and (
+                    usage_chunk_dict["is_byok"] is True or is_byok is None
+                ):
+                    is_byok = usage_chunk_dict["is_byok"]
                 if usage_chunk_dict["cache_creation_input_tokens"] is not None and (
                     usage_chunk_dict["cache_creation_input_tokens"] > 0
                     or cache_creation_input_tokens is None
@@ -454,6 +472,8 @@ class ChunkProcessor:
         return UsagePerChunk(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+            cost=cost,
+            is_byok=is_byok,
             cache_creation_input_tokens=cache_creation_input_tokens,
             cache_read_input_tokens=cache_read_input_tokens,
             web_search_requests=web_search_requests,
@@ -478,6 +498,8 @@ class ChunkProcessor:
         calculated_usage_per_chunk = self._calculate_usage_per_chunk(chunks=chunks)
         prompt_tokens = calculated_usage_per_chunk["prompt_tokens"]
         completion_tokens = calculated_usage_per_chunk["completion_tokens"]
+        cost: Optional[float] = calculated_usage_per_chunk.get("cost")
+        is_byok: Optional[bool] = calculated_usage_per_chunk.get("is_byok")
         ## anthropic prompt caching information ##
         cache_creation_input_tokens: Optional[int] = calculated_usage_per_chunk[
             "cache_creation_input_tokens"
@@ -553,6 +575,12 @@ class ChunkProcessor:
                 returned_usage.prompt_tokens_details.web_search_requests = (
                     web_search_requests
                 )
+
+        # Set cost and is_byok if available
+        if cost is not None:
+            returned_usage.cost = cost
+        if is_byok is not None:
+            returned_usage.is_byok = is_byok
 
         # Return a new usage object with the new values
 

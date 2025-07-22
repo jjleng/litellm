@@ -136,6 +136,7 @@ class CustomStreamWrapper:
         )  # keep track of the returned chunks - used for calculating the input/output tokens for stream options
         self.is_function_call = self.check_is_function_call(logging_obj=logging_obj)
         self.created: Optional[int] = None
+        self.final_usage_obj: Optional[Usage] = None
 
     def __iter__(self):
         return self
@@ -709,10 +710,12 @@ class CustomStreamWrapper:
         response_obj: Dict[str, Any],
     ) -> bool:
         if (
-            "content" in completion_obj
-            and (
-                isinstance(completion_obj["content"], str)
-                and len(completion_obj["content"]) > 0
+            (
+                "content" in completion_obj
+                and (
+                    isinstance(completion_obj["content"], str)
+                    and len(completion_obj["content"]) > 0
+                )
             )
             or (
                 "tool_calls" in completion_obj
@@ -740,6 +743,7 @@ class CustomStreamWrapper:
                 "annotations" in model_response.choices[0].delta
                 and model_response.choices[0].delta.annotations is not None
             )
+            or response_obj.get("usage") is not None
         ):
             return True
         else:
@@ -836,6 +840,33 @@ class CustomStreamWrapper:
                 self._optional_combine_thinking_block_in_choices(
                     model_response=model_response
                 )
+
+                if response_obj.get("usage") is not None:
+                    if self.final_usage_obj is None:
+                        self.final_usage_obj = response_obj["usage"]
+                    else:
+                        new_usage_dict = (
+                            response_obj["usage"].model_dump()
+                            if hasattr(response_obj["usage"], "model_dump")
+                            else response_obj["usage"]
+                        )
+                        old_usage_dict = (
+                            self.final_usage_obj.model_dump()
+                            if hasattr(self.final_usage_obj, "model_dump")
+                            else self.final_usage_obj
+                        )
+
+                        for k, v in new_usage_dict.items():
+                            if v is not None:
+                                old_usage_dict[k] = v
+
+                        if isinstance(old_usage_dict, dict):
+                            self.final_usage_obj = Usage(**old_usage_dict)
+                        else:
+                            self.final_usage_obj = old_usage_dict
+
+                    model_response.usage = self.final_usage_obj
+
                 print_verbose(f"returning model_response: {model_response}")
                 return model_response
             else:
@@ -1243,18 +1274,7 @@ class CustomStreamWrapper:
                             model_response,
                             "usage",
                             litellm.Usage(
-                                prompt_tokens=response_obj["usage"].get(
-                                    "prompt_tokens", None
-                                )
-                                or None,
-                                completion_tokens=response_obj["usage"].get(
-                                    "completion_tokens", None
-                                )
-                                or None,
-                                total_tokens=response_obj["usage"].get(
-                                    "total_tokens", None
-                                )
-                                or None,
+                               **response_obj["usage"] 
                             ),
                         )
                     elif isinstance(response_obj["usage"], Usage):
@@ -1546,8 +1566,8 @@ class CustomStreamWrapper:
                     )
                     # HANDLE STREAM OPTIONS
                     self.chunks.append(response)
-                    if hasattr(
-                        response, "usage"
+                    if (
+                        hasattr(response, "usage") and not self.send_stream_usage
                     ):  # remove usage from chunk, only send on final chunk
                         # Convert the object to a dictionary
                         obj_dict = response.dict()
@@ -1561,16 +1581,18 @@ class CustomStreamWrapper:
                             chunk=obj_dict, hidden_params=response._hidden_params
                         )
                     # add usage as hidden param
-                    if self.sent_last_chunk is True and self.stream_options is None:
-                        usage = calculate_total_usage(chunks=self.chunks)
-                        response._hidden_params["usage"] = usage
+                if self.sent_last_chunk is True and self.stream_options is None:
+                    response._hidden_params["usage"] = self.final_usage_obj
                     # RETURN RESULT
                     return response
 
         except StopIteration:
             if self.sent_last_chunk is True:
+                usage_to_use = self.final_usage_obj
                 complete_streaming_response = litellm.stream_chunk_builder(
-                    chunks=self.chunks, messages=self.messages
+                    chunks=self.chunks,
+                    messages=self.messages,
+                    usage=usage_to_use,
                 )
 
                 response = self.model_response_creator()
@@ -1609,8 +1631,10 @@ class CustomStreamWrapper:
                 self.sent_last_chunk = True
                 processed_chunk = self.finish_reason_handler()
                 if self.stream_options is None:  # add usage as hidden param
-                    usage = calculate_total_usage(chunks=self.chunks)
-                    processed_chunk._hidden_params["usage"] = usage
+                    if self.final_usage_obj is not None:
+                        processed_chunk._hidden_params["usage"] = self.final_usage_obj
+                    else:
+                        processed_chunk._hidden_params["usage"] = None
                 ## LOGGING
                 executor.submit(
                     self.run_success_logging_and_cache_storage,
@@ -1702,8 +1726,8 @@ class CustomStreamWrapper:
                         input=self.response_uptil_now, model=self.model
                     )
                     self.chunks.append(processed_chunk)
-                    if hasattr(
-                        processed_chunk, "usage"
+                    if (
+                        hasattr(processed_chunk, "usage") and not self.send_stream_usage
                     ):  # remove usage from chunk, only send on final chunk
                         # Convert the object to a dictionary
                         obj_dict = processed_chunk.dict()
@@ -1753,8 +1777,11 @@ class CustomStreamWrapper:
         except (StopAsyncIteration, StopIteration):
             if self.sent_last_chunk is True:
                 # log the final chunk with accurate streaming values
+                usage_to_use = self.final_usage_obj
                 complete_streaming_response = litellm.stream_chunk_builder(
-                    chunks=self.chunks, messages=self.messages
+                    chunks=self.chunks,
+                    messages=self.messages,
+                    usage=usage_to_use,
                 )
                 response = self.model_response_creator()
                 if complete_streaming_response is not None:

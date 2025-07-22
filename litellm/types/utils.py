@@ -879,6 +879,14 @@ class ServerToolUse(BaseModel):
 
 
 class Usage(CompletionUsage):
+    # Override with our wrappers
+    prompt_tokens_details: Optional[PromptTokensDetailsWrapper] = Field(None)
+    completion_tokens_details: Optional[CompletionTokensDetailsWrapper] = Field(None)
+
+    # Optional Openroute usage parameters when include_usage = true
+    cost: Optional[float] = None
+    is_byok: Optional[bool] = None
+
     _cache_creation_input_tokens: int = PrivateAttr(
         0
     )  # hidden param for prompt caching. Might change, once openai introduces their equivalent.
@@ -887,8 +895,6 @@ class Usage(CompletionUsage):
     )  # hidden param for prompt caching. Might change, once openai introduces their equivalent.
 
     server_tool_use: Optional[ServerToolUse] = None
-
-    prompt_tokens_details: Optional[PromptTokensDetailsWrapper] = None
     """Breakdown of tokens used in the prompt."""
 
     def __init__(
@@ -1140,12 +1146,18 @@ class ModelResponseStream(ModelResponseBase):
         else:
             created = created
 
+        usage: Optional[Usage] = None
         if (
             "usage" in kwargs
             and kwargs["usage"] is not None
             and isinstance(kwargs["usage"], dict)
         ):
-            kwargs["usage"] = Usage(**kwargs["usage"])
+            # remove usage from kwargs
+            usage = kwargs["usage"]
+            if isinstance(usage, dict):
+                usage = Usage(**usage)
+            elif isinstance(usage, Usage):
+                usage = usage
 
         kwargs["id"] = id
         kwargs["created"] = created
@@ -1153,6 +1165,9 @@ class ModelResponseStream(ModelResponseBase):
         kwargs["provider_specific_fields"] = provider_specific_fields
 
         super().__init__(**kwargs)
+
+        if usage is not None:
+            self.usage = usage
 
     def __contains__(self, key):
         # Define custom behavior for the 'in' operator

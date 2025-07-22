@@ -6,6 +6,8 @@ from ..utils import CompletionTokensDetails, PromptTokensDetailsWrapper
 class UsagePerChunk(TypedDict):
     prompt_tokens: int
     completion_tokens: int
+    cost: Optional[float]
+    is_byok: Optional[bool]
     cache_creation_input_tokens: Optional[int]
     cache_read_input_tokens: Optional[int]
     web_search_requests: Optional[int]
